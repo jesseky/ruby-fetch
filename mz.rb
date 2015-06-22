@@ -5,7 +5,7 @@
 # time  : 2015-06-22
 # ruby fetch images using parallel. supports mzitu/doubanfuli/twitter/blogspot
 # this is a testing file for ruby parallel i/o processing.
-# notice: accessing blogspot/twitter from proxy goagent.
+# notice: accessing blogspot/twitter through goagent proxy.
 # usage: 
 #	./mz.rb mzt ./mzt							# fetch mzitu/share images
 #	./mz.rb dbf ./dbf							# fetch doubanfuli.com images save to ./dbf/ directory
@@ -22,7 +22,7 @@ require 'open_uri_redirections'
 require 'yaml'
 require 'json'
 require 'parallel'
-require 'thread'
+# require 'thread' # no need now
 
 class Hash
   def symbolize_keys!
@@ -190,7 +190,7 @@ when "twt"
 	abort "need user argument" unless ARGV[1]
 	abort "need save dir argument" unless ARGV[2] && Dir.exists?(ARGV[2])
 	url = "https://twitter.com/i/profiles/show/#{ARGV[1]}/media_timeline?include_available_features=1&include_entities=1&last_note_ts=1943"
-	opt.merge!({:img_query=>".media-thumbnail", :attr=>'data-url', :end=>1.0/0, 
+	opt.merge!({:img_query=>".media-thumbnail", :attr=>'data-url', :end=>Float::INFINITY, 
 				:next_page=>/stream-item-tweet-(\d+)/, :next_index=>-1, :page_url=>'&max_position=%s', :json_key=>'items_html',
 				:save_path=>"#{ARGV[2].chomp('/')}/%s", :fn_name=>/:\w+$/, :force_go=>false})
 	FetchLite.new(:proxy=>true).fetch_page_image url, opt 

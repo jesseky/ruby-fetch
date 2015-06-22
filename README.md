@@ -3,7 +3,7 @@
 ruby fetch images using parallel. supports mzitu/doubanfuli/twitter/blogspot
 this is a testing file for ruby parallel i/o processing.
 ```
-#### notice: accessing blogspot/twitter from proxy goagent.
+#### notice: accessing blogspot/twitter through goagent proxy.
 
 ### usage:
 ```shell
