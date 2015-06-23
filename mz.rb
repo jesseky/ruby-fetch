@@ -76,16 +76,8 @@ class FetchLite
 				end
 			end
 			puts "page: %03d, img: %03d, fetch: %03d, time: %.2fs" % [p,imgs.size,fnum,(Time.now-start).to_f]
-			if nxt then
-				begin 
-					nxt = htm.scan(opt[:next_page]).flatten[opt[:next_index]]
-				rescue => e 
-					puts "get next page error: #{e.message}"
-					nxt = nil
-				end	
-			end
-			nxt = nil if found > 0 && !opt[:force_go]
-			break if opt[:next_page] && !nxt
+			nxt = htm.scan(opt[:next_page]).flatten[opt[:next_index]] if nxt
+			break if opt[:next_page] && (!nxt || found > 0 && !opt[:force_go])
 		end
 	end
 
@@ -114,45 +106,40 @@ class FetchLite
 				v = v.scan(opt[:result_reg])[0][0] if opt[:result_reg] && v
 				b = YAML.load(v)[opt[:result_key]] if v
 				s = b.map{|l| opt[:save_fmt] % l.symbolize_keys!} if b
-				result = result.concat s
+				result = result.concat s if s
 				puts "num: %03d [%.2f] %s" % [s.size, Time.now-istart, u] if s
 			rescue => e
 				puts "url: #{u}, #{e.message}"
 			end
 		end
-		IO.write(opt[:save_file], result.sort.join("\n"))
 		puts "total: %d, time: %.2fs" % [result.size, Time.now-start]
+		IO.write(opt[:save_file], result.sort.join("\n"))
 	end
 
 	def filter_urls(f_file, t_file, opt={})
-		worked, ret, mch, sug, exl,url = 0,[],opt[:url_match],opt[:sug_match],opt[:exclude],load_urls_from_file(f_file,:keep=>true)
+		worked, ret, rfn, sug, exl,url = 0,[],opt[:url_refine],opt[:sug_match],opt[:exclude],load_urls_from_file(f_file,:keep=>true)
 		url.each_slice(10) do |bat| # 10 个一批次
-			ds, sk, key = [], [], []
+			ds, sk = [], []
 			worked += bat.size
 			bat.each_with_index do |l,i| 
-				sg, va = ' ', l.split("\t", 2)	
-				sa = mch ? va[0].scan(mch)[0] : nil
-				va[0] = sa[0] if sa
-				in_exl = exl ? exl.any?{|e| l.include?(e)} : true
-				if sug && l =~ sug && !in_exl then # sug 表示正则匹配建议选择的项目
-					sk << i 
-					sg = '-'	
-				end	
+				va = l.split("\t", 2)	
+				va[0] = va[0].scan(rfn)[0] if rfn
+				sg = sug && l =~ sug && !(exl && exl.any?{|e| l.include? e }) ? '-' : ' ' # sug 表示正则匹配建议选择的项目
+				sk << i if '-' == sg
 				ds << "[%d] %s %s\n" % [i, sg, va.join("\t")] # ds 表示 display，显示出时忽略url 
 			end
-			if opt[:auto] then 
-				key = sk
+			key = 
+			if opt[:auto] then sk
 			else
 				puts ds.join+"输入保留编号: Y 全部保留，- 使用建议，回车忽略，区间：0 2 58 = [0 2 5 6 7 8]"
-				keep = STDIN.gets.chomp # 交互获取输入
-				case keep.upcase
-				when 'Y' then key = (0..bat.size-1).to_a  	
-				when '-' then key = sk
-				else 
-					key = keep.split(/[\s+]/).map{|i| i.size>1 ? Range.new(*i.split('').map(&:to_i)).to_a : i.to_i}.flatten.sort.uniq
-				end unless keep.empty?
+				kep = STDIN.gets.chomp.upcase # 交互获取输入
+				case kep
+				when 'Y' then (0..bat.size-1).to_a  	
+				when '-' then sk
+				else kep.split(/[\s+]/).map{|i| i.size>1 ? Range.new(*i.split('', 2).map(&:to_i)).to_a : i.to_i}.flatten.sort.uniq
+				end unless kep.empty? || kep == 'N'
 			end
-			puts "[%02d%%] Select: #{key}" % (100*worked/url.size) 
+			puts "[%02d%%] Select: #{key}" % (100*worked / url.size) 
 			ret = ret.concat(bat.values_at(*key).compact) if key && key.size > 0
 		end	
 		puts "Filter: %d" % ret.size
@@ -184,7 +171,7 @@ when "dbf"
 when "url"
 	abort "need file argument" unless ARGV[1] 
 	abort "need save dir argument" unless ARGV[2] && Dir.exists?(ARGV[2])
-	opt.merge!({:threads=>20, :img_query=>".post img[src^=http]", :save_path=>"#{ARGV[2].chomp('/')}/%02d-%03d-%03d%s"})
+	opt.merge!({:threads=>20, :img_query=>".post-body img[src^=http]", :save_path=>"#{ARGV[2].chomp('/')}/%02d-%03d-%03d%s"})
 	FetchLite.new(:proxy=>true).fetch_urls_image ARGV[1], opt
 when "twt"
 	abort "need user argument" unless ARGV[1]
@@ -192,7 +179,7 @@ when "twt"
 	url = "https://twitter.com/i/profiles/show/#{ARGV[1]}/media_timeline?include_available_features=1&include_entities=1&last_note_ts=1943"
 	opt.merge!({:img_query=>".media-thumbnail", :attr=>'data-url', :end=>Float::INFINITY, 
 				:next_page=>/stream-item-tweet-(\d+)/, :next_index=>-1, :page_url=>'&max_position=%s', :json_key=>'items_html',
-				:save_path=>"#{ARGV[2].chomp('/')}/%s", :fn_name=>/:\w+$/, :force_go=>false})
+				:save_path=>"#{ARGV[2].chomp('/')}/%s", :fn_name=>/:\w+$/, :force_go=>true})
 	FetchLite.new(:proxy=>true).fetch_page_image url, opt 
 when "arc"
 	abort "need site argument" unless ARGV[1] 
@@ -206,7 +193,7 @@ when "arc"
 when "flt"
 	abort "need from file param" unless ARGV[1]
 	abort "need to file param" unless ARGV[2]
-	opt = {:url_match=>/(\d{4}\/\d{2})/, :sug_match=>/^(?!.*MKV).*\[\d+P\].*$/i, 
+	opt = {:url_refine=>/\d{4}\/\d{2}/, :sug_match=>/^(?!.*MKV).*\[\d+P\].*$/i, 
 		   :exclude=>%w(13/10/15p.html 13/10/9p-36p.html heros12p 13/11/b29p.html motorbike 15/04/28p.html 15/04/29p.html 15/04/31p.html), 
 		   :auto => ARGV[3] == '-' ? true : false }
 	FetchLite.new.filter_urls ARGV[1], ARGV[2], opt
