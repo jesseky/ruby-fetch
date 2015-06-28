@@ -43,10 +43,11 @@ class FetchLite
   
   def fetch_page_image(url, opt)
     begin
-      num = opt[:end] || open(url, @open_opt).read.scan(opt[:fn_page]).flatten[0].to_i
+      num = opt[:end] || open(url, @open_opt).read.scan(opt[:fn_page]).flatten[opt[:fn_index] || 0].to_i
     rescue => e
       abort "url: #{url}, error: #{e.message}"
     end
+    pal = {:in_threads=>opt[:threads] || 10}
     str = opt[:str] || 1
     nxt = "" if opt[:next_page]
     puts "start from: #{str} to: #{num}"
@@ -59,21 +60,40 @@ class FetchLite
         puts "url: #{u}, error: #{e.message}" 
         break
       end
-      start,found,fnum,imgs = Time.now,0,0,doc.css(opt[:img_query])
-      Parallel.each_with_index(imgs, :in_threads=>opt[:threads] || 10) do |m,i|
-        img = m.attr(opt[:attr] || 'src')
-        img = img.scan(opt[:fn_img]).flatten[0] if opt[:fn_img]
-        file = opt[:fn_name] ? opt[:save_path] % File.basename(img).sub(opt[:fn_name],'') : opt[:save_path] % [p,imgs.size,i+1,File.extname(img)]
-        found += 1 if File.exists?(file)
-        begin
-          fnum += 1 if !File.exists?(file) && IO.write(file,open(img, @open_opt).read) > 0 
-        rescue => e
-          puts "img: #{img} , #{e.message}"
+      lam = lambda {|imgs, pi| 
+        start, exist, fetch = Time.now, 0, 0
+        Parallel.each_with_index imgs, pal do |m, i|
+          img = m.attr(opt[:attr] || 'src')
+          img = img.scan(opt[:fn_img]).flatten[0] if opt[:fn_img]
+          file = opt[:fn_name] ? opt[:save_path] % File.basename(img).sub(opt[:fn_name],'') : opt[:save_path] % [p,imgs.size,i+1,File.extname(img)]
+          exist += 1 if File.exists?(file)
+          begin
+            fetch += 1 if !File.exists?(file) && IO.write(file,open(img, @open_opt).read) > 0 
+          rescue => e
+            puts "img: #{img} , #{e.message}"
+          end
+        end if imgs && imgs.size >0
+        rest = [imgs ? imgs.size : 0, exist, fetch, (Time.now-start).to_f]
+        puts "page: %03d, %simg: %03d, exist: %03d, fetch: %03d, time: %.2fs" % ([p, pi ? ("sub: %03d, " % pi) : ''] + rest)
+        rest
+      }
+      if opt[:page_query] then
+        pages = doc.css(opt[:page_query]).map{|pi| pi.attr('href') } if opt[:page_query] # for subpage 
+        pages.each_with_index do |pv, pi|
+          begin
+            imgs = Nokogiri::HTML.parse(open(pv, @open_opt)).css(opt[:img_query])
+          rescue => e
+            puts "url: #{pv}, error: #{e.message}"
+          end
+          rest = lam.call(imgs, pi)
+          return if rest[1] > 0 && !opt[:force_go]  
         end
+      else
+        imgs = doc.css(opt[:img_query])
+        rest = lam.call(imgs, nil)
+        nxt = htm.scan(opt[:next_page]).flatten[opt[:next_index]] if nxt
+        return if rest[1] > 0 && !opt[:force_go] || opt[:next_page] && !nxt 
       end
-      puts "page: %03d, img: %03d, fetch: %03d, time: %.2fs" % [p,imgs.size,fnum,(Time.now-start).to_f]
-      nxt = htm.scan(opt[:next_page]).flatten[opt[:next_index]] if nxt
-      break if opt[:next_page] && (!nxt || found > 0 && !opt[:force_go])
     end
   end
 
@@ -145,7 +165,7 @@ end
 
 trap("INT") do abort " Interrupt, Exit." end
 abort "must set argv which" unless ARGV[0]
-opt = {} 
+opt = {force_go: ARGV[-1] == 'force_go'} 
 argvs_str = ARGV.grep(/^str=[1-9][0-9]*$/)[0]
 argvs_end = ARGV.grep(/^end=[1-9][0-9]*$/)[0]
 opt[:str] = argvs_str[4..-1].to_i if argvs_str
@@ -156,13 +176,20 @@ when "mzt"
   abort "need save dir argument" unless ARGV[1] && Dir.exists?(ARGV[1]) 
   url = "http://www.mzitu.com/share/"
   opt.merge! fn_page: %r|<span class='page-numbers current'>(\d+)</span>|, page_url: "comment-page-%d", threads: 20,
-             img_query: ".commentlist img", save_path: "./#{ARGV[1].chomp('/')}/%03d-%02d-%02d%s"
+             img_query: '.commentlist img', save_path: "./#{ARGV[1].chomp('/')}/%03d-%02d-%02d%s"
   FetchLite.new.fetch_page_image url, opt
 when "dbf"
   abort "need save dir argument" unless ARGV[1] && Dir.exists?(ARGV[1]) 
   url = "http://www.doubanfuli.com/"
   opt.merge! fn_page: %r|<a href='.*/(\d+)'>最后</a>|, page_url: "page/%d", threads: 20,
-             img_query: "article img[src*=timthumb]", fn_img: /src=([^&]+)/, save_path: "./#{ARGV[1].chomp('/')}/%03d-%02d-%02d%s"
+             img_query: 'article img[src*=timthumb]', fn_img: /src=([^&]+)/, save_path: "./#{ARGV[1].chomp('/')}/%03d-%02d-%02d%s"
+  FetchLite.new.fetch_page_image url, opt
+when "faceks"
+  abort "need save dir argument" unless ARGV[1] && Dir.exists?(ARGV[1]) 
+  url = "http://sexy.faceks.com/tag/%E7%BE%8E%E5%AA%9B%E9%A6%86"
+  opt.merge! fn_page: %r|<a class="num" href="[^"]+">(\d+)</a>|, fn_index: -1, page_url: "?page=%d", threads: 20,
+             page_query: '.m-postlst a.img', fn_name: //,
+             img_query: '.ctc a.imgclasstag', attr: 'bigimgsrc', save_path: "./#{ARGV[1].chomp('/')}/%s"
   FetchLite.new.fetch_page_image url, opt
 when "url"
   abort "need file argument" unless ARGV[1] 
@@ -175,7 +202,7 @@ when "twt"
   url = "https://twitter.com/i/profiles/show/#{ARGV[1]}/media_timeline?include_available_features=1&include_entities=1&last_note_ts=1943"
   opt.merge! img_query: ".media-thumbnail", attr: 'data-url', end: Float::INFINITY, 
              next_page: /stream-item-tweet-(\d+)/, next_index: -1, page_url: '&max_position=%s', json_key: 'items_html',
-             save_path: "#{ARGV[2].chomp('/')}/%s", fn_name: /:\w+$/, force_go: ARGV[3] == 'force_go'
+             save_path: "#{ARGV[2].chomp('/')}/%s", fn_name: /:\w+$/
   FetchLite.new(:proxy=>true).fetch_page_image url, opt 
 when "arc"
   abort "need site argument" unless ARGV[1] 

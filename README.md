@@ -13,5 +13,6 @@ this is a testing file for ruby parallel i/o processing.
 	./mz.rb flt ./raw_urls.txt ./pass_urls.txt	# filter urls 
 	./mz.rb url ./pass_urls.txt ./blogspot/		# load urls from pass_urls.txt and fetch images save to ./blogspot/
 	./mz.rb twt T1_constantine ./twt			# fetch twitter user images and save to twt
+	set last argument `force_go` to force traversal all urls 
 ```
 BSD license. Enjoy.
